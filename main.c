@@ -65,6 +65,7 @@
 #include "nrf_drv_saadc.h"
 #include "nrf_drv_ppi.h"
 #include "nrf_drv_timer.h"
+#include "nrf_delay.h"
 
 #include "game_controller.h"
 
@@ -82,7 +83,7 @@
 #define SCAN_TIMEOUT            0x0000                                  /**< Timout when scanning. 0x0000 disables timeout. */
 
 #define MIN_CONNECTION_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines minimum connection interval in millisecond. */
-#define MAX_CONNECTION_INTERVAL MSEC_TO_UNITS(75, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
+#define MAX_CONNECTION_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
 #define SLAVE_LATENCY           0                                       /**< Determines slave latency in counts of connection events. */
 #define SUPERVISION_TIMEOUT     MSEC_TO_UNITS(4000, UNIT_10_MS)         /**< Determines supervision time-out in units of 10 millisecond. */
 
@@ -90,13 +91,18 @@
 #define UUID32_SIZE             4                                       /**< Size of 32 bit UUID */
 #define UUID128_SIZE            16                                      /**< Size of 128 bit UUID */
 
+#define UUID_TO_CONNECT_TO      0x0002
+
 
 // SAADC defines
 #define SAMPLES_IN_BUFFER 		4
-#define SAADC_TIMER_INTERVAL	100
+#define SAADC_TIMER_INTERVAL	10
+#define PRINT_SAADC_VALUES      0
 
-#define OUTPUT_SPEED			0
-#define OUTPUT_TURN 			1
+#define SAADC_LEFT_X    		0
+#define SAADC_LEFT_Y        	1
+#define SAADC_RIGHT_X           2
+#define SAADC_RIGHT_Y           3
 
 
 #define CAR_SPEED_IDLE          128
@@ -104,8 +110,10 @@
 #define CAR_TURN_IDLE           128
 #define CAR_TURN_MAX            100
 
-#define CAR_SPEED_INDEX         0
-#define CAR_TURN_INDEX          1
+#define CAR_SPEED_INDEX         SAADC_LEFT_Y
+#define CAR_TURN_INDEX          SAADC_RIGHT_X
+#define CAR_BLE_SPEED_INDEX     0
+#define CAR_BLE_TURN_INDEX      1
 
 #define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
 
@@ -118,6 +126,9 @@ static nrf_saadc_channel_config_t   channel_0_config;
 static nrf_saadc_channel_config_t   channel_1_config;
 static nrf_saadc_channel_config_t   channel_2_config;
 static nrf_saadc_channel_config_t   channel_3_config;
+void saadc_sampling_event_enable(void);
+void saadc_init(void);
+void saadc_sampling_event_init(void);
 
 static bool connected = false;
 
@@ -127,6 +138,7 @@ static uint8_t controller_output[20] = {0};
 // Variables for handling a car via the game controller
 static volatile uint8_t car_speed = 128;
 static volatile uint8_t car_turn = 128;
+static volatile bool new_date_available = false;
 
 
 void set_led(uint32_t pin, uint8_t value)
@@ -180,7 +192,7 @@ static ble_gap_scan_params_t const m_scan_params =
 /**@brief NUS uuid. */
 static ble_uuid_t const m_nus_uuid =
 {
-    .uuid = BLE_UUID_NUS_SERVICE,
+    .uuid = UUID_TO_CONNECT_TO,
     .type = NUS_SERVICE_UUID_TYPE
 };
 
@@ -331,10 +343,11 @@ void game_controller_send_data()
 {   
     static uint8_t data_array[5];
     
-    data_array[CAR_SPEED_INDEX] = 225;
-    data_array[CAR_TURN_INDEX] = 128;
+    data_array[CAR_BLE_SPEED_INDEX] = 225;
+    data_array[CAR_BLE_TURN_INDEX] = 128;
     
     while (ble_nus_c_string_send(&m_ble_nus_c, data_array, 5) != NRF_SUCCESS){}
+    NRF_LOG_RAW_INFO("Data sent: %d\t%d\n", data_array[CAR_BLE_SPEED_INDEX], data_array[CAR_BLE_TURN_INDEX]);
 //    do
 //    {
 //        ret_val = ble_nus_c_string_send(&m_ble_nus_c, data_array, 5);
@@ -549,6 +562,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             err_code = ble_db_discovery_start(&m_db_disc, p_ble_evt->evt.gap_evt.conn_handle);
             APP_ERROR_CHECK(err_code);
             rgb_set(0, 0, 1);
+        
+            
             connected = true;
             break;
 
@@ -926,15 +941,21 @@ void saadc_sampling_event_enable(void)
     APP_ERROR_CHECK(err_code);
 }
 
+// Function to constrain output value to uint8_t and avoid fluctuations around zero-point for the SAADC to be interpreted as user input
+uint8_t controller_normalize_output(int16_t input, uint8_t scale, uint8_t lower_border, uint8_t upper_border, uint8_t default_value)
+{
+    input = input < 0 ? 0 : input;
+    uint8_t scaled_value = input / scale;
+    return scaled_value < lower_border ? scaled_value : scaled_value > upper_border ? scaled_value : default_value;
+}
 
 // Function that outputs values for the joysticks
 uint8_t controller_output_calc(nrf_drv_saadc_evt_t const * event) {
-
-    controller_output[OUTPUT_SPEED] = event->data.done.p_buffer[0] / 4;
-    controller_output[OUTPUT_TURN] = event->data.done.p_buffer[1] / 4;
+    controller_output[CAR_BLE_SPEED_INDEX] = controller_normalize_output(event->data.done.p_buffer[CAR_SPEED_INDEX], 4, 110, 140, 128);
+    controller_output[CAR_BLE_TURN_INDEX] = 255 - controller_normalize_output(event->data.done.p_buffer[CAR_TURN_INDEX], 4, 110, 140, 127); 
     
-    NRF_LOG_RAW_INFO("%d\n", controller_output[OUTPUT_SPEED]);
-    NRF_LOG_FLUSH();
+    //NRF_LOG_RAW_INFO("%d\n", controller_output[OUTPUT_SPEED]);
+    //NRF_LOG_FLUSH();
 
     return 0;
 }
@@ -943,36 +964,37 @@ uint8_t controller_output_calc(nrf_drv_saadc_evt_t const * event) {
 // SAADC callback
 void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 {
+    static uint16_t connected_counter = 0;
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
     {
         ret_code_t err_code;
-         uint16_t index = 20;
+        uint16_t index = 20;
 
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, SAMPLES_IN_BUFFER);
         APP_ERROR_CHECK(err_code);
 
-
-        #if PRINT_SAADC_VALUES
-        int i;
-        for (i = 0; i < SAMPLES_IN_BUFFER; i++)
-        {
-            SEGGER_RTT_printf(0, "%d\t", p_event->data.done.p_buffer[i]);
-        }
-        SEGGER_RTT_printf(0, "\r\n");
-        #endif
-
-
         // Update characteristic array with new joystick data
         controller_output_calc(p_event);
 
+        #if PRINT_SAADC_VALUES
+            for(uint8_t i = 0; i < SAMPLES_IN_BUFFER; i++)
+            {
+                NRF_LOG_RAW_INFO("%d\t", controller_output[i]);
+            }
+            NRF_LOG_RAW_INFO("\r\n");
+            NRF_LOG_FLUSH();
+        #endif
+        
+
+        if(connected && (connected_counter < 20))
+            connected_counter++;
         
         // Send data
-        if(connected && (m_adc_evt_counter > 40))
+        
+        
+        if(connected && (m_adc_evt_counter > 40) && (connected_counter >= 20))
         {
-            while (ble_nus_c_string_send(&m_ble_nus_c, controller_output, index) != NRF_SUCCESS)
-            {
-                    // repeat until sent.
-            }
+            new_date_available = true;
         }
         m_adc_evt_counter++;
     }
@@ -1081,15 +1103,20 @@ int main(void)
 
     // Start scanning for peripherals and initiate connection
     // with devices that advertise NUS UUID.
-   // printf("BLE UART central example started.");
+    // printf("BLE UART central example started.");
     NRF_LOG_INFO("BLE UART central example started.");
     scan_start();
 
     for (;;)
     {
-        if (NRF_LOG_PROCESS() == false)
+        if (new_date_available)
         {
-            nrf_pwr_mgmt_run();
+            new_date_available = false;
+            
+            while (ble_nus_c_string_send(&m_ble_nus_c, controller_output, 2) != NRF_SUCCESS)
+            {
+                    // repeat until sent.
+            }
         }
     }
 }

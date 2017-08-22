@@ -82,8 +82,11 @@
 #define SCAN_WINDOW             0x0050                                  /**< Determines scan window in units of 0.625 millisecond. */
 #define SCAN_TIMEOUT            0x0000                                  /**< Timout when scanning. 0x0000 disables timeout. */
 
-#define MIN_CONNECTION_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines minimum connection interval in millisecond. */
-#define MAX_CONNECTION_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
+
+#define CONN_INTERVAL_DEFAULT   (uint16_t)(MSEC_TO_UNITS(7.5, UNIT_1_25_MS))    /**< Default connection interval used at connection establishment by central side. */
+
+#define CONN_INTERVAL_MIN       MSEC_TO_UNITS(7.5, UNIT_1_25_MS)         /**< Determines minimum connection interval in millisecond. */
+#define CONN_INTERVAL_MAX       MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
 #define SLAVE_LATENCY           0                                       /**< Determines slave latency in counts of connection events. */
 #define SUPERVISION_TIMEOUT     MSEC_TO_UNITS(4000, UNIT_10_MS)         /**< Determines supervision time-out in units of 10 millisecond. */
 
@@ -91,7 +94,14 @@
 #define UUID32_SIZE             4                                       /**< Size of 32 bit UUID */
 #define UUID128_SIZE            16                                      /**< Size of 128 bit UUID */
 
-#define UUID_TO_CONNECT_TO      0x0002
+#define UUID_TO_CONNECT_TO      0x0001                
+
+
+#define NAME_RED_CAR            "Nordic_League_Red"
+#define NAME_BLUE_CAR           "Nordic_League_Blu"
+#define NAME_BALANCER           "nRF Balancer"
+
+#define DEFAULT_DEVICE_NAME     "Nordic_League_Red"
 
 
 // SAADC defines
@@ -111,11 +121,20 @@
 #define CAR_TURN_MAX            100
 
 #define CAR_SPEED_INDEX         SAADC_LEFT_Y
-#define CAR_TURN_INDEX          SAADC_RIGHT_X
+#define CAR_TURN_INDEX          SAADC_LEFT_X
 #define CAR_BLE_SPEED_INDEX     0
 #define CAR_BLE_TURN_INDEX      1
 
 #define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
+
+
+/**@brief Variable length data encapsulation in terms of length and pointer to data. */
+typedef struct
+{
+    uint8_t  * p_data;      /**< Pointer to data. */
+    uint16_t   data_len;    /**< Length of data. */
+} data_t;
+
 
 static const nrf_drv_timer_t   	    m_timer = NRF_DRV_TIMER_INSTANCE(3);
 static nrf_saadc_value_t       	    m_buffer_pool[2][SAMPLES_IN_BUFFER];
@@ -130,6 +149,8 @@ void saadc_sampling_event_enable(void);
 void saadc_init(void);
 void saadc_sampling_event_init(void);
 
+uint16_t conn_handle;
+
 static bool connected = false;
 
 static uint8_t controller_output[20] = {0};
@@ -139,6 +160,12 @@ static uint8_t controller_output[20] = {0};
 static volatile uint8_t car_speed = 128;
 static volatile uint8_t car_turn = 128;
 static volatile bool new_date_available = false;
+
+// Name to use for advertising and connection.
+static volatile char m_target_periph_name[] = DEFAULT_DEVICE_NAME;
+
+static volatile uint8_t target_name_length = sizeof(m_target_periph_name) - 1;
+
 
 
 void set_led(uint32_t pin, uint8_t value)
@@ -164,13 +191,14 @@ BLE_DB_DISCOVERY_DEF(m_db_disc);                                        /**< DB 
 
 static uint16_t m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - OPCODE_LENGTH - HANDLE_LENGTH; /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
 
-/**@brief Connection parameters requested for connection. */
-static ble_gap_conn_params_t const m_connection_param =
+
+// Connection parameters requested for connection.
+static ble_gap_conn_params_t m_conn_param =
 {
-    (uint16_t)MIN_CONNECTION_INTERVAL,  // Minimum connection
-    (uint16_t)MAX_CONNECTION_INTERVAL,  // Maximum connection
-    (uint16_t)SLAVE_LATENCY,            // Slave latency
-    (uint16_t)SUPERVISION_TIMEOUT       // Supervision time-out
+    .min_conn_interval = CONN_INTERVAL_MIN,   // Minimum connection interval.
+    .max_conn_interval = CONN_INTERVAL_MAX,   // Maximum connection interval.
+    .slave_latency     = SLAVE_LATENCY,       // Slave latency.
+    .conn_sup_timeout  = SUPERVISION_TIMEOUT  // Supervisory timeout.
 };
 
 /** @brief Parameters used when scanning. */
@@ -222,8 +250,8 @@ static void scan_start(void)
     ret = sd_ble_gap_scan_start(&m_scan_params);
     APP_ERROR_CHECK(ret);
 
-    ret = bsp_indication_set(BSP_INDICATE_SCANNING);
-    APP_ERROR_CHECK(ret);
+//    ret = bsp_indication_set(BSP_INDICATE_SCANNING);
+//    APP_ERROR_CHECK(ret);
 }
 
 
@@ -346,7 +374,7 @@ void game_controller_send_data()
     data_array[CAR_BLE_SPEED_INDEX] = 225;
     data_array[CAR_BLE_TURN_INDEX] = 128;
     
-    while (ble_nus_c_string_send(&m_ble_nus_c, data_array, 5) != NRF_SUCCESS){}
+    while (connected && (ble_nus_c_string_send(&m_ble_nus_c, data_array, 5) != NRF_SUCCESS)){}
     NRF_LOG_RAW_INFO("Data sent: %d\t%d\n", data_array[CAR_BLE_SPEED_INDEX], data_array[CAR_BLE_TURN_INDEX]);
 //    do
 //    {
@@ -392,7 +420,7 @@ static void ble_nus_c_evt_handler(ble_nus_c_t * p_ble_nus_c, ble_nus_c_evt_t con
 
         case BLE_NUS_C_EVT_DISCONNECTED:
             NRF_LOG_INFO("Disconnected.");
-            scan_start();
+            //scan_start();
             break;
     }
 }
@@ -427,6 +455,92 @@ static bool shutdown_handler(nrf_pwr_mgmt_evt_t event)
 }
 
 NRF_PWR_MGMT_HANDLER_REGISTER(shutdown_handler, APP_SHUTDOWN_HANDLER_PRIORITY);
+
+
+
+
+/**@brief Parses advertisement data, providing length and location of the field in case
+ *        matching data is found.
+ *
+ * @param[in]  Type of data to be looked for in advertisement data.
+ * @param[in]  Advertisement report length and pointer to report.
+ * @param[out] If data type requested is found in the data report, type data length and
+ *             pointer to data will be populated here.
+ *
+ * @retval NRF_SUCCESS if the data type is found in the report.
+ * @retval NRF_ERROR_NOT_FOUND if the data type could not be found.
+ */
+static uint32_t adv_report_parse(uint8_t type, data_t * p_advdata, data_t * p_typedata)
+{
+    uint32_t  index = 0;
+    uint8_t * p_data;
+
+    p_data = p_advdata->p_data;
+
+    while (index < p_advdata->data_len)
+    {
+        uint8_t field_length = p_data[index];
+        uint8_t field_type   = p_data[index + 1];
+
+        if (field_type == type)
+        {
+            p_typedata->p_data   = &p_data[index + 2];
+            p_typedata->data_len = field_length - 1;
+            return NRF_SUCCESS;
+        }
+        index += field_length + 1;
+    }
+    return NRF_ERROR_NOT_FOUND;
+}
+
+
+
+/**@brief Function for searching a given name in the advertisement packets.
+ *
+ * @details Use this function to parse received advertising data and to find a given
+ * name in them either as 'complete_local_name' or as 'short_local_name'.
+ *
+ * @param[in]   p_adv_report   advertising data to parse.
+ * @param[in]   name_to_find   name to search.
+ * @return   true if the given name was found, false otherwise.
+ */
+static bool find_adv_name(ble_gap_evt_adv_report_t const * p_adv_report, char const * name_to_find)
+{
+    ret_code_t err_code;
+    data_t     adv_data;
+    data_t     dev_name;
+    bool       found = false;
+
+    // Initialize advertisement report for parsing.
+    adv_data.p_data   = (uint8_t *)p_adv_report->data;
+    adv_data.data_len = p_adv_report->dlen;
+
+    // Search for matching advertising names.
+    err_code = adv_report_parse(BLE_GAP_AD_TYPE_COMPLETE_LOCAL_NAME, &adv_data, &dev_name);
+
+    if (   (err_code == NRF_SUCCESS)
+        && (target_name_length == dev_name.data_len)
+        && (memcmp(name_to_find, dev_name.p_data, dev_name.data_len) == 0))
+    {
+        found = true;
+    }
+    else
+    {
+        // Look for the short local name if the complete name was not found.
+        err_code = adv_report_parse(BLE_GAP_AD_TYPE_SHORT_LOCAL_NAME, &adv_data, &dev_name);
+
+        if (   (err_code == NRF_SUCCESS)
+            && (strlen(name_to_find) == dev_name.data_len)
+            && (memcmp((const void *)m_target_periph_name, dev_name.p_data, dev_name.data_len) == 0))
+        {
+            found = true;
+        }
+    }
+
+    return found;
+}
+
+
 
 /**@brief Reads an advertising report and checks if a UUID is present in the service list.
  *
@@ -509,6 +623,44 @@ static bool is_uuid_present(ble_uuid_t               const * p_target_uuid,
 }
 
 
+
+
+/**@brief Function for handling BLE_GAP_ADV_REPORT events.
+ * Search for a peer with matching device name.
+ * If found, stop advertising and send a connection request to the peer.
+ */
+static void on_ble_gap_evt_adv_report(ble_gap_evt_t const * p_gap_evt)
+{
+    if (!find_adv_name(&p_gap_evt->params.adv_report, (const void *)m_target_periph_name))
+    {
+        return;
+    }
+
+    NRF_LOG_INFO("Device \"%s\" found, sending a connection request.",
+                 (uint32_t) m_target_periph_name);
+
+    // Stop advertising.
+    (void) sd_ble_gap_adv_stop();
+
+    // Initiate connection.
+    m_conn_param.min_conn_interval = CONN_INTERVAL_DEFAULT;
+    m_conn_param.max_conn_interval = CONN_INTERVAL_DEFAULT;
+
+    ret_code_t err_code;
+    err_code = sd_ble_gap_connect(&p_gap_evt->params.adv_report.peer_addr,
+                                  &m_scan_params,
+                                  &m_conn_param,
+                                  APP_BLE_CONN_CFG_TAG);
+
+    if (err_code != NRF_SUCCESS)
+    {
+        NRF_LOG_ERROR("sd_ble_gap_connect() failed: 0x%x.", err_code);
+    }
+}
+
+
+
+
 /**@brief Function for handling BLE events.
  *
  * @param[in]   p_ble_evt   Bluetooth stack event.
@@ -524,13 +676,15 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         case BLE_GAP_EVT_ADV_REPORT:
         {
             ble_gap_evt_adv_report_t const * p_adv_report = &p_gap_evt->params.adv_report;
+            
+            on_ble_gap_evt_adv_report(p_gap_evt);
 
-            if (is_uuid_present(&m_nus_uuid, p_adv_report))
+            if (is_uuid_present(&m_nus_uuid, p_adv_report) && 0)
             {
 
                 err_code = sd_ble_gap_connect(&p_adv_report->peer_addr,
                                               &m_scan_params,
-                                              &m_connection_param,
+                                              &m_conn_param,
                                               APP_BLE_CONN_CFG_TAG);
 
                 if (err_code == NRF_SUCCESS)
@@ -563,6 +717,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             APP_ERROR_CHECK(err_code);
             rgb_set(0, 0, 1);
         
+            conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+        
             
             connected = true;
             break;
@@ -591,6 +747,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
                                                     &p_gap_evt->params.conn_param_update_request.conn_params);
             APP_ERROR_CHECK(err_code);
             break;
+        case BLE_GAP_EVT_DISCONNECTED:
+            scan_start();
+            break;  
 
 #if defined(S132)
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -799,17 +958,19 @@ static void db_discovery_init(void)
     switch(pin)
     {
         case LEFT_BTN_1_PIN:
+            connected = false;
+            sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            char str[] = NAME_BALANCER;
+            target_name_length = strlen(str);
+            memcpy((void *)&m_target_periph_name, str, target_name_length);
+            NRF_LOG_RAW_INFO("%s \t length: %d\n", str, strlen(str));
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Left button 1 pressed");
-                car_speed = CAR_SPEED_IDLE + CAR_SPEED_MAX;
-                
-                game_controller_send_data();
             } 
             else if(action == NRF_GPIOTE_POLARITY_LOTOHI)
             {
                 NRF_LOG_RAW_INFO("Left button 1 released");
-                car_speed = CAR_SPEED_IDLE;
             }
             break;
         
@@ -828,12 +989,10 @@ static void db_discovery_init(void)
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Left button 3 pressed");
-                car_speed = CAR_SPEED_IDLE - CAR_SPEED_MAX;
             } 
             else if(action == NRF_GPIOTE_POLARITY_LOTOHI)
             {
                 NRF_LOG_RAW_INFO("Left button 3 released");
-                car_speed = CAR_SPEED_IDLE;
             }
             break;
         
@@ -860,15 +1019,19 @@ static void db_discovery_init(void)
             break;
         
         case RIGHT_BTN_2_PIN:
+            connected = false;
+            sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            char blue[] = NAME_BLUE_CAR;
+            target_name_length = strlen(blue);
+            memcpy((void *)&m_target_periph_name, blue, target_name_length);
+            NRF_LOG_RAW_INFO("%s \t length: %d\n", blue, strlen(blue));
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Right button 2 pressed");
-                car_turn = CAR_TURN_IDLE - CAR_TURN_MAX;
             } 
             else if(action == NRF_GPIOTE_POLARITY_LOTOHI)
             {
                 NRF_LOG_RAW_INFO("Right button 2 released");
-                car_turn = CAR_TURN_IDLE;
             }
             break;
         
@@ -884,20 +1047,22 @@ static void db_discovery_init(void)
             break;
         
         case RIGHT_BTN_4_PIN:
+            connected = false;
+            sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            char red[] = NAME_RED_CAR;
+            target_name_length = strlen(red);
+            memcpy((void *)&m_target_periph_name, red, target_name_length);
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Right button 4 pressed");
-                car_turn = CAR_TURN_IDLE + CAR_TURN_MAX;
             } 
             else if(action == NRF_GPIOTE_POLARITY_LOTOHI)
             {
                 NRF_LOG_RAW_INFO("Right button 4 released");
-                car_turn = CAR_TURN_IDLE;
             }
             break;
         
     }
-    game_controller_send_data();
     NRF_LOG_FLUSH();
  }
 
@@ -968,7 +1133,6 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
     {
         ret_code_t err_code;
-        uint16_t index = 20;
 
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, SAMPLES_IN_BUFFER);
         APP_ERROR_CHECK(err_code);
@@ -1109,7 +1273,7 @@ int main(void)
 
     for (;;)
     {
-        if (new_date_available)
+        if (new_date_available && connected)
         {
             new_date_available = false;
             

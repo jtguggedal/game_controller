@@ -98,14 +98,14 @@
 
 
 #define NAME_RED_CAR            "Nordic_League_Red"
-#define NAME_BLUE_CAR           "Nordic_League_Blu"
+#define NAME_BLUE_CAR           "Nordic_League_Blue"
 #define NAME_BALANCER           "nRF Balancer"
 
 #define DEFAULT_DEVICE_NAME     "Nordic_League_Red"
 
 
 // SAADC defines
-#define SAMPLES_IN_BUFFER 		4
+#define SAMPLES_IN_BUFFER 		5
 #define SAADC_TIMER_INTERVAL	10
 #define PRINT_SAADC_VALUES      0
 
@@ -113,6 +113,24 @@
 #define SAADC_LEFT_Y        	1
 #define SAADC_RIGHT_X           2
 #define SAADC_RIGHT_Y           3
+
+#define ADC_REF_VOLTAGE_IN_MILLIVOLTS   600                                     /**< Reference voltage (in milli volts) used by ADC while doing conversion. */
+#define ADC_PRE_SCALING_COMPENSATION    6                                       /**< The ADC is configured to use VDD with 1/3 prescaling as input. And hence the result of conversion is to be multiplied by 3 to get the actual value of the battery voltage.*/
+#define DIODE_FWD_VOLT_DROP_MILLIVOLTS  0                                     /**< Typical forward voltage drop of the diode . */
+#define ADC_RES_10BIT                   1024                                    /**< Maximum digital value for 10-bit ADC conversion. */
+#define VDD_MIN_THRESHOLD               3100
+
+#define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+
+
+/**@brief Macro to convert the result of ADC conversion in millivolts.
+ *
+ * @param[in]  ADC_VALUE   ADC result.
+ *
+ * @retval     Result converted to millivolts.
+ */
+#define ADC_RESULT_IN_MILLI_VOLTS(ADC_VALUE)\
+        ((((ADC_VALUE) * ADC_REF_VOLTAGE_IN_MILLIVOLTS) / ADC_RES_10BIT) * ADC_PRE_SCALING_COMPENSATION)
 
 
 #define CAR_SPEED_IDLE          128
@@ -145,6 +163,7 @@ static nrf_saadc_channel_config_t   channel_0_config;
 static nrf_saadc_channel_config_t   channel_1_config;
 static nrf_saadc_channel_config_t   channel_2_config;
 static nrf_saadc_channel_config_t   channel_3_config;
+static nrf_saadc_channel_config_t   channel_4_config;
 void saadc_sampling_event_enable(void);
 void saadc_init(void);
 void saadc_sampling_event_init(void);
@@ -152,6 +171,7 @@ void saadc_sampling_event_init(void);
 uint16_t conn_handle;
 
 static bool connected = false;
+static bool battery_low_voltage = false;
 
 static uint8_t controller_output[20] = {0};
 
@@ -1116,11 +1136,11 @@ uint8_t controller_normalize_output(int16_t input, uint8_t scale, uint8_t lower_
 
 // Function that outputs values for the joysticks
 uint8_t controller_output_calc(nrf_drv_saadc_evt_t const * event) {
-    controller_output[CAR_BLE_SPEED_INDEX] = controller_normalize_output(event->data.done.p_buffer[CAR_SPEED_INDEX], 4, 110, 140, 128);
-    controller_output[CAR_BLE_TURN_INDEX] = 255 - controller_normalize_output(event->data.done.p_buffer[CAR_TURN_INDEX], 4, 110, 140, 127); 
+    controller_output[CAR_BLE_SPEED_INDEX] = controller_normalize_output(event->data.done.p_buffer[CAR_SPEED_INDEX], 4, 120, 130, 128);
+    controller_output[CAR_BLE_TURN_INDEX] = 255 - controller_normalize_output(event->data.done.p_buffer[CAR_TURN_INDEX], 4, 120, 130, 127); 
     
-    //NRF_LOG_RAW_INFO("%d\n", controller_output[OUTPUT_SPEED]);
-    //NRF_LOG_FLUSH();
+//    NRF_LOG_RAW_INFO("%d\n", controller_output[CAR_BLE_SPEED_INDEX]);
+//    NRF_LOG_FLUSH();
 
     return 0;
 }
@@ -1132,10 +1152,22 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
     static uint16_t connected_counter = 0;
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
     {
-        ret_code_t err_code;
-
+        ret_code_t          err_code;
+        nrf_saadc_value_t   vdd_result;
+        uint16_t            batt_lvl_in_milli_volts;
+        
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, SAMPLES_IN_BUFFER);
         APP_ERROR_CHECK(err_code);
+
+        vdd_result = p_event->data.done.p_buffer[4];
+        batt_lvl_in_milli_volts = ADC_RESULT_IN_MILLI_VOLTS(vdd_result) +
+                                  DIODE_FWD_VOLT_DROP_MILLIVOLTS;
+        
+        if(batt_lvl_in_milli_volts < VDD_MIN_THRESHOLD) {
+            battery_low_voltage = true;
+        }
+        
+        NRF_LOG_RAW_INFO("Voltage: %d\n", batt_lvl_in_milli_volts);
 
         // Update characteristic array with new joystick data
         controller_output_calc(p_event);
@@ -1179,7 +1211,7 @@ void saadc_init(void)
     channel_0_config.pin_n      = NRF_SAADC_INPUT_DISABLED;
 
 
-    //set configuration for saadc channel 0, for the left joystick x axis
+    //set configuration for saadc channel 1, for the left joystick x axis
     channel_1_config.resistor_p = NRF_SAADC_RESISTOR_DISABLED;
     channel_1_config.resistor_n = NRF_SAADC_RESISTOR_DISABLED;
     channel_1_config.gain       = NRF_SAADC_GAIN1_4;
@@ -1190,7 +1222,7 @@ void saadc_init(void)
     channel_1_config.pin_n      = NRF_SAADC_INPUT_DISABLED;
 
 
-    //set configuration for saadc channel 0, for the left joystick x axis
+    //set configuration for saadc channel 2, for the left joystick x axis
     channel_2_config.resistor_p = NRF_SAADC_RESISTOR_DISABLED;
     channel_2_config.resistor_n = NRF_SAADC_RESISTOR_DISABLED;
     channel_2_config.gain       = NRF_SAADC_GAIN1_4;
@@ -1201,7 +1233,7 @@ void saadc_init(void)
     channel_2_config.pin_n      = NRF_SAADC_INPUT_DISABLED;
 
 
-    //set configuration for saadc channel 0, for the left joystick x axis
+    //set configuration for saadc channel 3, for the left joystick x axis
     channel_3_config.resistor_p = NRF_SAADC_RESISTOR_DISABLED;
     channel_3_config.resistor_n = NRF_SAADC_RESISTOR_DISABLED;
     channel_3_config.gain       = NRF_SAADC_GAIN1_4;
@@ -1210,6 +1242,20 @@ void saadc_init(void)
     channel_3_config.mode       = NRF_SAADC_MODE_SINGLE_ENDED;
     channel_3_config.pin_p      = (nrf_saadc_input_t)(JS_RIGHT_Y);
     channel_3_config.pin_n      = NRF_SAADC_INPUT_DISABLED;
+
+
+
+
+    //set configuration for saadc channel 3, for the left joystick x axis
+    channel_4_config.resistor_p = NRF_SAADC_RESISTOR_DISABLED;
+    channel_4_config.resistor_n = NRF_SAADC_RESISTOR_DISABLED;
+    channel_4_config.gain       = NRF_SAADC_GAIN1_6;
+    channel_4_config.reference  = NRF_SAADC_REFERENCE_INTERNAL;
+    channel_4_config.acq_time   = NRF_SAADC_ACQTIME_10US;
+    channel_4_config.mode       = NRF_SAADC_MODE_SINGLE_ENDED; 
+    channel_4_config.burst      = NRF_SAADC_BURST_DISABLED,  
+    channel_4_config.pin_p      = (nrf_saadc_input_t)(NRF_SAADC_INPUT_VDD);
+    channel_4_config.pin_n      = NRF_SAADC_INPUT_DISABLED;
 
 
     err_code = nrf_drv_saadc_init(NULL, saadc_callback);
@@ -1226,11 +1272,14 @@ void saadc_init(void)
 
     err_code = nrf_drv_saadc_channel_init(3, &channel_3_config);
     APP_ERROR_CHECK(err_code);
-
-    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[0],SAMPLES_IN_BUFFER);
+    
+    err_code = nrf_drv_saadc_channel_init(4, &channel_4_config);
     APP_ERROR_CHECK(err_code);
 
-    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[1],SAMPLES_IN_BUFFER);
+    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[0], SAMPLES_IN_BUFFER);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[1], SAMPLES_IN_BUFFER);
     APP_ERROR_CHECK(err_code);
 }
 
@@ -1281,6 +1330,12 @@ int main(void)
             {
                     // repeat until sent.
             }
+        }
+        
+        if(battery_low_voltage)
+        {
+            rgb_set(1, 0, 0);
+            connected = false;
         }
     }
 }

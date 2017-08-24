@@ -18,24 +18,28 @@ void game_controller_init(nrf_drv_gpiote_evt_handler_t evt_handler)
         APP_ERROR_CHECK(err_code);
     }
 
-    // Configuring pins
-    nrf_drv_gpiote_in_config_t config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
-    config.pull = NRF_GPIO_PIN_PULLUP;
-    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_1_PIN, &config, evt_handler);
+    // Configuring buttons
+    nrf_drv_gpiote_in_config_t btn_config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
+    btn_config.pull = NRF_GPIO_PIN_PULLUP;
+    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_1_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_2_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_2_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_3_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_3_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_4_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(LEFT_BTN_4_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_1_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_1_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_2_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_2_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_3_PIN, &config, evt_handler);
-    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_4_PIN, &config, evt_handler);
+    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_3_PIN, &btn_config, evt_handler);
     APP_ERROR_CHECK(err_code);
+    err_code = nrf_drv_gpiote_in_init(RIGHT_BTN_4_PIN, &btn_config, evt_handler);
+    APP_ERROR_CHECK(err_code);
+    
+
+    
 
     nrf_drv_gpiote_in_event_enable(LEFT_BTN_1_PIN, true);
     nrf_drv_gpiote_in_event_enable(LEFT_BTN_2_PIN, true);

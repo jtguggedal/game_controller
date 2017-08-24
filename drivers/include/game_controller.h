@@ -31,9 +31,17 @@
 
 
 
-#define RGB_R       NRF_GPIO_PIN_MAP(1, 13)
-#define RGB_G       NRF_GPIO_PIN_MAP(1, 11)
-#define RGB_B       NRF_GPIO_PIN_MAP(1, 10)
+#define RGB_R                       NRF_GPIO_PIN_MAP(1, 13)
+#define RGB_G                       NRF_GPIO_PIN_MAP(1, 11)
+#define RGB_B                       NRF_GPIO_PIN_MAP(1, 10)
+
+#define BAT_CHG_STATUS              NRF_GPIO_PIN_MAP(0, 11)
+#define BAT_STATUS                  NRF_GPIO_PIN_MAP(0, 28)
+#define BAT_MONITOR_ENABLE          NRF_GPIO_PIN_MAP(0, 30)
+
+#define USB_DETECT                  NRF_GPIO_PIN_MAP(1, 9)
+
+
 
 void game_controller_init(nrf_drv_gpiote_evt_handler_t evt_handler);
 

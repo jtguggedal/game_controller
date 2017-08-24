@@ -99,28 +99,30 @@
 
 #define NAME_RED_CAR            "Nordic_League_Red"
 #define NAME_BLUE_CAR           "Nordic_League_Blue"
+#define NAME_DEMO_CAR           "Nordic_League_Demo"
 #define NAME_BALANCER           "nRF Balancer"
 
-#define DEFAULT_DEVICE_NAME     "Nordic_League_Red"
+#define DEFAULT_DEVICE_NAME     NAME_RED_CAR
 
 
 // SAADC defines
-#define SAMPLES_IN_BUFFER 		5
-#define SAADC_TIMER_INTERVAL	10
-#define PRINT_SAADC_VALUES      0
+#define SAMPLES_IN_BUFFER 		            5
+#define SAADC_TIMER_INTERVAL	            15
+#define PRINT_SAADC_VALUES                  0
 
-#define SAADC_LEFT_X    		0
-#define SAADC_LEFT_Y        	1
-#define SAADC_RIGHT_X           2
-#define SAADC_RIGHT_Y           3
+#define SAADC_LEFT_X    		            0
+#define SAADC_LEFT_Y        	            1
+#define SAADC_RIGHT_X                       2
+#define SAADC_RIGHT_Y                       3
 
-#define ADC_REF_VOLTAGE_IN_MILLIVOLTS   600                                     /**< Reference voltage (in milli volts) used by ADC while doing conversion. */
-#define ADC_PRE_SCALING_COMPENSATION    6                                       /**< The ADC is configured to use VDD with 1/3 prescaling as input. And hence the result of conversion is to be multiplied by 3 to get the actual value of the battery voltage.*/
-#define DIODE_FWD_VOLT_DROP_MILLIVOLTS  0                                     /**< Typical forward voltage drop of the diode . */
-#define ADC_RES_10BIT                   1024                                    /**< Maximum digital value for 10-bit ADC conversion. */
-#define VDD_MIN_THRESHOLD               3100
+#define BATTERY_VOLTAGE_MONITOR_INTERVAL    70
+#define ADC_REF_VOLTAGE_IN_MILLIVOLTS       600                                     /**< Reference voltage (in milli volts) used by ADC while doing conversion. */
+#define ADC_PRE_SCALING_COMPENSATION        6                                       /**< The ADC is configured to use VDD with 1/3 prescaling as input. And hence the result of conversion is to be multiplied by 3 to get the actual value of the battery voltage.*/
+#define DIODE_FWD_VOLT_DROP_MILLIVOLTS      0                                     /**< Typical forward voltage drop of the diode . */
+#define ADC_RES_10BIT                       1024                                    /**< Maximum digital value for 10-bit ADC conversion. */
+#define VDD_MIN_THRESHOLD                   3200
 
-#define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+#define DEAD_BEEF                           0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
 
 /**@brief Macro to convert the result of ADC conversion in millivolts.
@@ -133,17 +135,17 @@
         ((((ADC_VALUE) * ADC_REF_VOLTAGE_IN_MILLIVOLTS) / ADC_RES_10BIT) * ADC_PRE_SCALING_COMPENSATION)
 
 
-#define CAR_SPEED_IDLE          128
-#define CAR_SPEED_MAX           100
-#define CAR_TURN_IDLE           128
-#define CAR_TURN_MAX            100
+#define CAR_SPEED_IDLE                      128
+#define CAR_SPEED_MAX                       100
+#define CAR_TURN_IDLE                       128
+#define CAR_TURN_MAX                        100
 
-#define CAR_SPEED_INDEX         SAADC_LEFT_Y
-#define CAR_TURN_INDEX          SAADC_LEFT_X
-#define CAR_BLE_SPEED_INDEX     0
-#define CAR_BLE_TURN_INDEX      1
+#define CAR_SPEED_INDEX                     SAADC_LEFT_Y
+#define CAR_TURN_INDEX                      SAADC_LEFT_X
+#define CAR_BLE_SPEED_INDEX                 0
+#define CAR_BLE_TURN_INDEX                  1
 
-#define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
+#define ECHOBACK_BLE_UART_DATA              1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
 
 
 /**@brief Variable length data encapsulation in terms of length and pointer to data. */
@@ -174,6 +176,9 @@ static bool connected = false;
 static bool battery_low_voltage = false;
 
 static uint8_t controller_output[20] = {0};
+
+static bool usb_detected = false;
+static bool charge_finished = false;
 
 
 // Variables for handling a car via the game controller
@@ -768,6 +773,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             APP_ERROR_CHECK(err_code);
             break;
         case BLE_GAP_EVT_DISCONNECTED:
+            rgb_set(0, 1, 0);
             scan_start();
             break;  
 
@@ -975,15 +981,18 @@ static void db_discovery_init(void)
 
  static void button_evt_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
  {
+     static char name_blue[] = NAME_BLUE_CAR;
+     static char name_red[] = NAME_RED_CAR;
+     static char name_demo[] = NAME_DEMO_CAR;
+     static char name_balancer[] = NAME_BALANCER;
+     
     switch(pin)
     {
         case LEFT_BTN_1_PIN:
             connected = false;
             sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-            char str[] = NAME_BALANCER;
-            target_name_length = strlen(str);
-            memcpy((void *)&m_target_periph_name, str, target_name_length);
-            NRF_LOG_RAW_INFO("%s \t length: %d\n", str, strlen(str));
+            target_name_length = strlen(name_balancer);
+            memcpy((void *)&m_target_periph_name, name_balancer, target_name_length);
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Left button 1 pressed");
@@ -1041,10 +1050,8 @@ static void db_discovery_init(void)
         case RIGHT_BTN_2_PIN:
             connected = false;
             sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-            char blue[] = NAME_BLUE_CAR;
-            target_name_length = strlen(blue);
-            memcpy((void *)&m_target_periph_name, blue, target_name_length);
-            NRF_LOG_RAW_INFO("%s \t length: %d\n", blue, strlen(blue));
+            target_name_length = strlen(name_blue);
+            memcpy((void *)&m_target_periph_name, name_blue, target_name_length);
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Right button 2 pressed");
@@ -1056,6 +1063,10 @@ static void db_discovery_init(void)
             break;
         
         case RIGHT_BTN_3_PIN:
+            connected = false;
+            sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            target_name_length = strlen(name_demo);
+            memcpy((void *)&m_target_periph_name, name_demo, target_name_length);
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Right button 3 pressed");
@@ -1069,9 +1080,8 @@ static void db_discovery_init(void)
         case RIGHT_BTN_4_PIN:
             connected = false;
             sd_ble_gap_disconnect(conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-            char red[] = NAME_RED_CAR;
-            target_name_length = strlen(red);
-            memcpy((void *)&m_target_periph_name, red, target_name_length);
+            target_name_length = strlen(name_red);
+            memcpy((void *)&m_target_periph_name, name_red, target_name_length);
             if(action == NRF_GPIOTE_POLARITY_HITOLO)
             {
                 NRF_LOG_RAW_INFO("Right button 4 pressed");
@@ -1101,7 +1111,11 @@ void saadc_sampling_event_init(void)
     err_code = nrf_drv_ppi_init();
     APP_ERROR_CHECK(err_code);
 
-    err_code = nrf_drv_timer_init(&m_timer, NULL, timer_handler);
+    
+    nrf_drv_timer_config_t cfg = NRF_DRV_TIMER_DEFAULT_CONFIG;
+    cfg.bit_width = NRF_TIMER_BIT_WIDTH_32;
+    
+    err_code = nrf_drv_timer_init(&m_timer, &cfg, timer_handler);
     APP_ERROR_CHECK(err_code);
 
     /* setup m_timer for compare event every 100ms */
@@ -1153,21 +1167,26 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
     {
         ret_code_t          err_code;
-        nrf_saadc_value_t   vdd_result;
-        uint16_t            batt_lvl_in_milli_volts;
         
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, SAMPLES_IN_BUFFER);
         APP_ERROR_CHECK(err_code);
+        
+        if((m_adc_evt_counter % BATTERY_VOLTAGE_MONITOR_INTERVAL) == 0)
+        {
+            nrf_saadc_value_t   vdd_result;
+            uint16_t            batt_lvl_in_milli_volts;
+            
 
-        vdd_result = p_event->data.done.p_buffer[4];
-        batt_lvl_in_milli_volts = ADC_RESULT_IN_MILLI_VOLTS(vdd_result) +
-                                  DIODE_FWD_VOLT_DROP_MILLIVOLTS;
-        
-        if(batt_lvl_in_milli_volts < VDD_MIN_THRESHOLD) {
-            battery_low_voltage = true;
+            vdd_result = p_event->data.done.p_buffer[4];
+            batt_lvl_in_milli_volts = ADC_RESULT_IN_MILLI_VOLTS(vdd_result) +
+                                      DIODE_FWD_VOLT_DROP_MILLIVOLTS;
+            
+            if(batt_lvl_in_milli_volts < VDD_MIN_THRESHOLD) {
+                battery_low_voltage = true;
+            }
+            
+            NRF_LOG_RAW_INFO("Voltage: %d\n", batt_lvl_in_milli_volts);
         }
-        
-        NRF_LOG_RAW_INFO("Voltage: %d\n", batt_lvl_in_milli_volts);
 
         // Update characteristic array with new joystick data
         controller_output_calc(p_event);
@@ -1287,11 +1306,55 @@ void saadc_init(void)
 
 ////// END of SAADC ////////
 
+void chg_evt_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+    switch(pin)
+    {
+        case USB_DETECT:
+            if(nrf_gpio_pin_read(USB_DETECT))
+                usb_detected = true;
+            else
+                usb_detected = false;
+            break;
+        case BAT_CHG_STATUS:
+            if(nrf_gpio_pin_read(BAT_CHG_STATUS))
+                charge_finished = true;
+            else
+                charge_finished = false;
+            break;
+    }
+   
+    if(usb_detected)
+    {
+        if(charge_finished)
+            rgb_set(0, 1, 1);
+        else
+            rgb_set(1, 1, 0);
+    }
+    else
+    {
+        if(connected)
+            rgb_set(0, 0, 1);
+        else
+            rgb_set(0, 1, 0);
+    }
+}
 
 
- 
- 
- 
+
+void gpiote_init(void)
+{
+    uint32_t err_code;
+    
+     // Configuring other GPIOTE events
+    nrf_drv_gpiote_in_config_t chg_detect_cfg = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
+    err_code = nrf_drv_gpiote_in_init(USB_DETECT, &chg_detect_cfg, chg_evt_handler);
+    APP_ERROR_CHECK(err_code);
+    err_code = nrf_drv_gpiote_in_init(BAT_CHG_STATUS, &chg_detect_cfg, chg_evt_handler);
+    APP_ERROR_CHECK(err_code);
+    nrf_drv_gpiote_in_event_enable(USB_DETECT, true);
+    nrf_drv_gpiote_in_event_enable(BAT_CHG_STATUS, true);
+}
  
  
  
@@ -1313,6 +1376,7 @@ int main(void)
     saadc_sampling_event_enable();
     
     game_controller_init(button_evt_handler);
+    gpiote_init();
 
     // Start scanning for peripherals and initiate connection
     // with devices that advertise NUS UUID.

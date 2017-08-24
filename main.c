@@ -102,7 +102,7 @@
 #define NAME_DEMO_CAR           "Nordic_League_Demo"
 #define NAME_BALANCER           "nRF Balancer"
 
-#define DEFAULT_DEVICE_NAME     NAME_RED_CAR
+#define DEFAULT_DEVICE_NAME     NAME_DEMO_CAR
 
 
 // SAADC defines
@@ -1160,6 +1160,8 @@ uint8_t controller_output_calc(nrf_drv_saadc_evt_t const * event) {
 }
 
 
+void check_charge(void);
+
 // SAADC callback
 void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 {
@@ -1175,6 +1177,9 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         {
             nrf_saadc_value_t   vdd_result;
             uint16_t            batt_lvl_in_milli_volts;
+            
+            
+            check_charge();
             
 
             vdd_result = p_event->data.done.p_buffer[4];
@@ -1317,7 +1322,7 @@ void chg_evt_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
                 usb_detected = false;
             break;
         case BAT_CHG_STATUS:
-            if(nrf_gpio_pin_read(BAT_CHG_STATUS))
+            if(!nrf_gpio_pin_read(BAT_CHG_STATUS))
                 charge_finished = true;
             else
                 charge_finished = false;
@@ -1340,6 +1345,37 @@ void chg_evt_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
     }
 }
 
+
+void check_charge(void)
+{
+
+    if(nrf_gpio_pin_read(USB_DETECT))
+        usb_detected = true;
+    else
+        usb_detected = false;
+     
+    
+    
+    if(nrf_gpio_pin_read(BAT_CHG_STATUS))
+        charge_finished = true;
+    else
+        charge_finished = false;
+    
+    if(usb_detected)
+    {
+        if(charge_finished)
+            rgb_set(0, 1, 1);
+        else
+            rgb_set(1, 1, 0);
+    }
+    else
+    {
+        if(connected)
+            rgb_set(0, 0, 1);
+        else
+            rgb_set(0, 1, 0);
+    }
+}
 
 
 void gpiote_init(void)
@@ -1376,7 +1412,10 @@ int main(void)
     saadc_sampling_event_enable();
     
     game_controller_init(button_evt_handler);
-    gpiote_init();
+    //gpiote_init();
+    
+    nrf_gpio_cfg_input(USB_DETECT, NRF_GPIO_PIN_NOPULL);
+    nrf_gpio_cfg_input(BAT_CHG_STATUS, NRF_GPIO_PIN_NOPULL);
 
     // Start scanning for peripherals and initiate connection
     // with devices that advertise NUS UUID.
@@ -1401,5 +1440,6 @@ int main(void)
             rgb_set(1, 0, 0);
             connected = false;
         }
+        
     }
 }
